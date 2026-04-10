@@ -3,137 +3,304 @@ import os
 import numpy as np
 import time
 from datetime import datetime
-from deepface import DeepFace
+from typing import List, Dict, Optional, Tuple
+import logging
+from contextlib import contextmanager
+from insightface.app import FaceAnalysis
 
-# --- КОНФИГУРАЦИЯ ПО УМОЛЧАНИЮ ---
+# --- КОНФИГУРАЦИЯ ---
 REFERENCE_FOLDER = "reference_faces"
 WEBCAM_ID = 0
-MODEL_NAME = "SFace"
-DETECTOR_BACKEND = "opencv"
+# InsightFace использует модели по умолчанию (ArcFace), название для отображения
+DEFAULT_MODEL_NAME = "ArcFace (InsightFace)"
+WINDOW_WIDTH = 640
+WINDOW_HEIGHT = 480
+CONTROLS_WINDOW_WIDTH = 320
+CONTROLS_WINDOW_HEIGHT = 220
+CONTROLS_WINDOW_OFFSET_X = 20
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def video_capture_context(cam_id: int, width: int, height: int):
+    """Контекстный менеджер для безопасной работы с камерой"""
+    cap = cv2.VideoCapture(cam_id)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if not cap.isOpened():
+        logger.error("Камера не найдена")
+        raise RuntimeError(f"Не удалось открыть камеру {cam_id}")
+    try:
+        yield cap
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+
 
 class DynamicConfig:
     """Контейнер для параметров, которые можно менять на лету"""
     def __init__(self):
-        self.threshold = 0.40       # Порог сходства (0.0 - 1.0)
-        self.frame_skip = 5         # Пропуск кадров
-        self.analysis_scale = 0.6   # Масштаб анализа (0.2 - 1.0)
-        self.min_face_area = 2500   # Мин. площадь лица в пикселях
+        # Порог для косинусного расстояния (обычно 0.3 - 0.6 для ArcFace)
+        self.threshold: float = 0.50       
+        self.frame_skip: int = 3           # Пропуск кадров (InsightFace быстрее, можно меньше пропускать)
+        self.min_face_area: int = 2500     # Мин. площадь лица в пикселях
+        self.model_name: str = DEFAULT_MODEL_NAME
+
+
+class LowLightEnhancer:
+    """Адаптивное улучшение кадров для детекции в условиях низкой освещённости"""
+    
+    def __init__(self, 
+                 clahe_clip_limit: float = 2.0,
+                 clahe_grid_size: int = 8,
+                 gamma_default: float = 1.0,
+                 gamma_dark: float = 1.8,
+                 brightness_threshold: int = 70):
+        self.clahe_clip_limit = clahe_clip_limit
+        self.clahe_grid_size = clahe_grid_size
+        self.clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, 
+                                     tileGridSize=(clahe_grid_size, clahe_grid_size))
+        self.gamma_default = gamma_default
+        self.gamma_dark = gamma_dark
+        self.brightness_threshold = brightness_threshold  # Порог средней яркости (0-255)
+    
+    def _measure_brightness(self, frame: np.ndarray) -> float:
+        """Оценивает среднюю яркость кадра (по яркостному каналу)"""
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        return np.mean(hsv[:, :, 2])
+    
+    def _gamma_correct(self, frame: np.ndarray, gamma: float) -> np.ndarray:
+        """Применяет gamma-коррекцию"""
+        if gamma == 1.0:
+            return frame
+        inv_gamma = 1.0 / gamma
+        table = np.array([(i / 255.0) ** inv_gamma * 255 
+                         for i in np.arange(0, 256)]).astype("uint8")
+        return cv2.LUT(frame, table)
+    
+    def enhance(self, frame: np.ndarray, force: bool = False) -> np.ndarray:
+        """
+        Улучшает кадр для детекции лиц.
+        Если force=True — применяет усиление независимо от яркости.
+        """
+        brightness = self._measure_brightness(frame)
+        
+        # Если кадр достаточно яркий — возвращаем как есть (экономим время)
+        if brightness >= self.brightness_threshold and not force:
+            return frame
+        
+        # 1. Применяем CLAHE к яркостному каналу (не к цвету!)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv[:, :, 2] = self.clahe.apply(hsv[:, :, 2])
+        enhanced = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        
+        # 2. Gamma-коррекция для тёмных кадров
+        gamma = self.gamma_dark if brightness < self.brightness_threshold else self.gamma_default
+        enhanced = self._gamma_correct(enhanced, gamma)
+        
+        logger.debug(f"🔦 Темный кадр (яркость={brightness:.1f}), применяем улучшение")
+        
+        return enhanced
+    
+    def update_clahe(self, clip_limit: float, grid_size: int = 8):
+        """Пересоздаёт CLAHE с новыми параметрами"""
+        self.clahe_clip_limit = clip_limit
+        self.clahe_grid_size = grid_size
+        self.clahe = cv2.createCLAHE(clipLimit=clip_limit, 
+                                     tileGridSize=(grid_size, grid_size))
+
+
+class FaceData:
+    """Структура данных о распознанном лице"""
+    def __init__(self, name: str, bbox: Tuple[int, int, int, int], 
+                 color: Tuple[int, int, int], confidence: float = 0.0):
+        self.name = name
+        self.bbox = bbox
+        self.color = color
+        self.confidence = confidence
+
 
 class FaceRecognitionSystem:
     def __init__(self, config: DynamicConfig):
         self.config = config
-        self.known_embeddings = []
-        print(f"[INFO] Инициализация системы (Модель: {MODEL_NAME})...")
+        self.known_embeddings: List[Dict] = []
+        self.known_embeddings_matrix: Optional[np.ndarray] = None  # Матрица для векторизации
+        self.known_norms: Optional[np.ndarray] = None  # Предвычисленные нормы
+        logger.info(f"Инициализация InsightFace (Модель: {config.model_name})...")
         
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
+        # Инициализация InsightFace App
+        # det_size влияет на скорость: (320, 320) быстрее, (640, 640) точнее для мелких лиц
+        try:
+            self.app = FaceAnalysis(providers=['CPUExecutionProvider'])
+            # Уменьшаем det_size для повышения FPS. Если лица мелкие, можно вернуть (640, 640)
+            self.app.prepare(ctx_id=0, det_size=(320, 320))
+            logger.info("InsightFace успешно инициализирован (det_size=320x320)")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации InsightFace: {e}")
+            raise e
         
         self._warmup_model()
         self._load_reference_faces()
-        print("[OK] Система готова к работе")
+        
+        # Инициализация улучшителя освещения
+        self.enhancer = LowLightEnhancer(
+            clahe_clip_limit=2.0,      # 1.5-3.0: выше = сильнее контраст, но возможен шум
+            gamma_dark=1.8,            # 1.5-2.2: сильнее осветление тёмных зон
+            brightness_threshold=70    # 50-90: ниже = чаще применяется улучшение
+        )
+        
+        logger.info("Система готова к работе")
 
     def _warmup_model(self):
+        """Прогрев модели для ускорения первой итерации"""
         try:
             dummy = np.zeros((100, 100, 3), dtype=np.uint8)
-            DeepFace.represent(
-                dummy, model_name=MODEL_NAME, detector_backend='skip', enforce_detection=False
-            )
-        except Exception:
-            pass
+            self.app.get(dummy)
+            logger.debug("Модель прогрета")
+        except Exception as e:
+            logger.warning(f"Прогрев модели не удался: {e}")
 
     def _load_reference_faces(self):
+        """Загрузка эталонных лиц из папки с векторизацией для ускорения"""
         if not os.path.exists(REFERENCE_FOLDER):
             os.makedirs(REFERENCE_FOLDER)
-            print(f"[WARN] Папка '{REFERENCE_FOLDER}' не найдена. Создана пустая.")
+            logger.warning(f"Папка '{REFERENCE_FOLDER}' не найдена. Создана пустая.")
             return
 
         self.known_embeddings.clear()
+        self.known_embeddings_matrix = None
+        self.known_norms = None
         count = 0
+        
         for filename in os.listdir(REFERENCE_FOLDER):
             if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
                 name = os.path.splitext(filename)[0]
                 img_path = os.path.join(REFERENCE_FOLDER, filename)
                 try:
-                    result = DeepFace.represent(
-                        img_path, model_name=MODEL_NAME, 
-                        detector_backend=DETECTOR_BACKEND, enforce_detection=False
-                    )
-                    if result and len(result) > 0:
-                        emb = np.array(result[0]['embedding'])
+                    img = cv2.imread(img_path)
+                    if img is None:
+                        logger.warning(f"Не удалось прочитать изображение {filename}")
+                        continue
+                        
+                    faces = self.app.get(img)
+                    if faces and len(faces) > 0:
+                        # Берем первое найденное лицо на фото
+                        emb = faces[0].embedding
                         self.known_embeddings.append({'name': name, 'embedding': emb})
                         count += 1
+                        logger.debug(f"Лицо {name} добавлено в базу")
+                    else:
+                        logger.warning(f"Лица не найдены на изображении {filename}")
                 except Exception as e:
-                    print(f"[WARN] Ошибка загрузки {filename}: {e}")
-        print(f"[INFO] Загружено лиц в базу: {count}")
+                    logger.warning(f"Ошибка загрузки {filename}: {e}")
+        
+        logger.info(f"Загружено лиц в базу: {count}")
+        
+        # Векторизация базы для ускорения сравнения (матричные операции вместо цикла)
+        if self.known_embeddings:
+            embeddings_list = [k['embedding'] for k in self.known_embeddings]
+            self.known_embeddings_matrix = np.array(embeddings_list)
+            # Предвычисляем нормы один раз при загрузке
+            self.known_norms = np.linalg.norm(self.known_embeddings_matrix, axis=1, keepdims=True)
+            logger.info("База векторизована для ускоренного сравнения")
 
     def reload_base(self):
         """Мягкая перезагрузка базы без полного рестарта"""
-        print("[INFO] Перезагрузка базы...")
+        logger.info("Перезагрузка базы...")
         self._load_reference_faces()
-        print("[OK] База обновлена")
+        logger.info("База обновлена")
 
-    def recognize_faces(self, frame):
-        if not self.known_embeddings:
+    def recognize_faces(self, frame: np.ndarray) -> List[FaceData]:
+        """Распознавание лиц на кадре с улучшением при низкой освещённости"""
+        if not self.known_embeddings or self.known_embeddings_matrix is None:
             return []
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+        # 🔦 Улучшаем кадр для детекции, если нужно
+        processed_frame = self.enhancer.enhance(frame)
         
-        if len(faces) == 0:
+        # InsightFace работает с улучшенным кадром
+        faces = self.app.get(processed_frame)
+        
+        if not faces:
             return []
 
-        # Читаем актуальные параметры из конфига
-        scale = max(0.2, min(1.0, self.config.analysis_scale))
-        min_area = max(1000, min(10000, self.config.min_face_area))
+        recognized_data: List[FaceData] = []
+        threshold = np.clip(self.config.threshold, 0.1, 1.0)
+        min_area = np.clip(self.config.min_face_area, 1000, 10000)
         
-        small_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
-        recognized_data = []
-        
-        for (x, y, w, h) in faces:
-            x_s, y_s = int(x * scale), int(y * scale)
-            w_s, h_s = int(w * scale), int(h * scale)
+        for face in faces:
+            # Получаем bounding box (x1, y1, x2, y2)
+            bbox = face.bbox.astype(int)
+            x1, y1, x2, y2 = bbox
+            w, h = x2 - x1, y2 - y1
             
-            if w_s * h_s < min_area:
+            # Фильтрация по площади
+            if w * h < min_area:
+                continue
+            
+            current_vec = face.embedding.reshape(1, -1)  # (1, dim)
+            
+            # ВЕКТОРИЗОВАННОЕ СРАВНЕНИЕ: вместо цикла по всем известным лицам
+            # используем матричное умножение для вычисления всех сходств сразу
+            dot_products = np.dot(current_vec, self.known_embeddings_matrix.T)  # (1, N)
+            
+            # Нормы уже предвычислены, берем норму текущего вектора
+            norm_current = np.linalg.norm(current_vec)
+            if norm_current == 0:
                 continue
                 
-            face_crop = small_frame[y_s:y_s+h_s, x_s:x_s+w_s]
-            if face_crop.size == 0:
-                continue
-
-            try:
-                current_emb = DeepFace.represent(
-                    face_crop, model_name=MODEL_NAME, 
-                    detector_backend='skip', enforce_detection=False
+            # Косинусное сходство для всех лиц сразу
+            cosine_similarities = dot_products / (norm_current * self.known_norms.flatten())  # (N,)
+            
+            # Находим лучшее совпадение
+            best_idx = np.argmax(cosine_similarities)
+            max_sim = cosine_similarities[best_idx]
+            best_name = self.known_embeddings[best_idx]['name']
+            
+            # Конвертируем сходство в "расстояние" для порога
+            distance = 1.0 - max_sim
+            
+            # Уверенность
+            confidence = max(0.0, max_sim) 
+            
+            if distance <= threshold:
+                recognized_data.append(
+                    FaceData(name=best_name, bbox=(x1, y1, x2, y2), 
+                            color=(0, 255, 0), confidence=confidence)
                 )
-                if not current_emb or len(current_emb) == 0:
-                    continue
-                    
-                current_vec = np.array(current_emb[0]['embedding'])
-                best_name, min_dist = "Unknown", float('inf')
-                
-                for known in self.known_embeddings:
-                    dist = np.linalg.norm(current_vec - known['embedding'])
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_name = known['name']
-                        
-                threshold = max(0.1, min(1.0, self.config.threshold))
-                if min_dist <= threshold:
-                    recognized_data.append({"name": best_name, "bbox": (x, y, x+w, y+h), "color": (0, 255, 0)})
-                else:
-                    recognized_data.append({"name": f"Unknown ({min_dist:.2f})", "bbox": (x, y, x+w, y+h), "color": (0, 0, 255)})
-            except Exception:
-                continue
+            else:
+                recognized_data.append(
+                    FaceData(name=f"Unknown", bbox=(x1, y1, x2, y2), 
+                            color=(0, 0, 255), confidence=0.0)
+                )
+        
         return recognized_data
 
-    def draw_results(self, frame, data):
+    def draw_results(self, frame: np.ndarray, data: List[FaceData]) -> np.ndarray:
+        """Отрисовка результатов распознавания"""
         for item in data:
-            x1, y1, x2, y2 = item["bbox"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), item["color"], 2)
-            cv2.putText(frame, item["name"], (x1, y1 - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, item["color"], 2)
-        cv2.putText(frame, f"Faces: {len(data)} | Model: {MODEL_NAME}", (10, 30), 
+            x1, y1, x2, y2 = item.bbox
+            cv2.rectangle(frame, (x1, y1), (x2, y2), item.color, 2)
+            
+            # Преобразуем confidence в float, т.к. InsightFace возвращает ndarray
+            if isinstance(item.confidence, np.ndarray):
+                conf_value = float(item.confidence[0]) if item.confidence.size > 0 else 0.0
+            else:
+                conf_value = item.confidence
+            
+            label = f"{item.name} ({conf_value:.2f})" if conf_value > 0 else item.name
+            
+            cv2.putText(frame, label, (x1, y1 - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, item.color, 2)
+        
+        info_text = f"Faces: {len(data)} | Model: {self.config.model_name}"
+        cv2.putText(frame, info_text, (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         return frame
 
@@ -141,76 +308,91 @@ def main():
     config = DynamicConfig()
     system = FaceRecognitionSystem(config)
 
-    cap = cv2.VideoCapture(WEBCAM_ID)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    if not cap.isOpened():
-        print("[ERROR] Камера не найдена")
-        return
+    try:
+        with video_capture_context(WEBCAM_ID, WINDOW_WIDTH, WINDOW_HEIGHT) as cap:
+            # --- ПАНЕЛЬ УПРАВЛЕНИЯ ---
+            cv2.namedWindow("Controls")
+            cv2.resizeWindow("Controls", CONTROLS_WINDOW_WIDTH, CONTROLS_WINDOW_HEIGHT)
+            cv2.moveWindow("Controls", WINDOW_WIDTH + CONTROLS_WINDOW_OFFSET_X, 10)
 
-    # --- ПАНЕЛЬ УПРАВЛЕНИЯ ---
-    cv2.namedWindow("Controls")
-    cv2.resizeWindow("Controls", 320, 220)
-    cv2.moveWindow("Controls", 660, 10) # Справа от видео (640+20 отступ)
-
-    # Инициализация трекбаров (значения x100 для float)
-    cv2.createTrackbar("Threshold x100", "Controls", int(config.threshold * 100), 100, lambda x: None)
-    cv2.createTrackbar("Frame Skip", "Controls", config.frame_skip, 15, lambda x: None)
-    cv2.createTrackbar("Scale x100", "Controls", int(config.analysis_scale * 100), 80, lambda x: None)
-    cv2.createTrackbar("Min Face Area", "Controls", config.min_face_area, 10000, lambda x: None)
-    
-    # Кнопка "Reload Base" (0 -> 1 триггерит перезагрузку)
-    cv2.createTrackbar("[RELOAD BASE]", "Controls", 0, 1, lambda x: None)
-    cv2.setTrackbarPos("[RELOAD BASE]", "Controls", 0)
-
-    print("[INFO] Нажмите 'q' для выхода. Меняйте параметры в панели 'Controls'")
-
-    frame_count = 0
-    last_data = []
-    prev_time = time.time()
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # Читаем актуальные значения с панели
-        config.threshold = cv2.getTrackbarPos("Threshold x100", "Controls") / 100.0
-        config.frame_skip = max(1, cv2.getTrackbarPos("Frame Skip", "Controls"))
-        config.analysis_scale = cv2.getTrackbarPos("Scale x100", "Controls") / 100.0
-        config.min_face_area = cv2.getTrackbarPos("Min Face Area", "Controls")
-        
-        # Мягкая перезагрузка базы
-        if cv2.getTrackbarPos("[RELOAD BASE]", "Controls") == 1:
-            system.reload_base()
+            # Инициализация трекбаров
+            # Threshold: для косинусного расстояния (0.3-0.6 типично)
+            cv2.createTrackbar("Threshold x100", "Controls", int(config.threshold * 100), 100, lambda x: None)
+            cv2.createTrackbar("Frame Skip", "Controls", config.frame_skip, 15, lambda x: None)
+            # Убран трекбар Scale x100, т.к. InsightFace сам масштабирует
+            cv2.createTrackbar("Min Face Area", "Controls", config.min_face_area, 10000, lambda x: None)
+            
+            # Трекбары для настройки улучшения освещения
+            cv2.createTrackbar("CLAHE Clip", "Controls", 20, 50, lambda x: None)  # 2.0 по умолчанию
+            cv2.createTrackbar("Gamma Dark x10", "Controls", 18, 30, lambda x: None)  # 1.8
+            cv2.createTrackbar("Brightness Thresh", "Controls", 70, 150, lambda x: None)  # 70
+            
+            # Кнопка "Reload Base" (0 -> 1 триггерит перезагрузку)
+            cv2.createTrackbar("[RELOAD BASE]", "Controls", 0, 1, lambda x: None)
             cv2.setTrackbarPos("[RELOAD BASE]", "Controls", 0)
 
-        # Корректный FPS
-        curr_time = time.time()
-        fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0
-        prev_time = curr_time
+            logger.info("Нажмите 'q' для выхода. Меняйте параметры в панели 'Controls'")
 
-        # Обработка с пропуском кадров
-        if frame_count % config.frame_skip == 0:
-            last_data = system.recognize_faces(frame)
+            frame_count = 0
+            last_data: List[FaceData] = []
+            prev_time = time.time()
             
-        frame = system.draw_results(frame, last_data)
-        
-        cv2.putText(frame, f"FPS: {fps:.1f}", (frame.shape[1] - 110, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        cv2.putText(frame, timestamp, (frame.shape[1] - 160, 60), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-        cv2.imshow('Video Feed', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+                # Читаем актуальные значения с панели
+                config.threshold = cv2.getTrackbarPos("Threshold x100", "Controls") / 100.0
+                config.frame_skip = max(1, cv2.getTrackbarPos("Frame Skip", "Controls"))
+                config.min_face_area = cv2.getTrackbarPos("Min Face Area", "Controls")
+                
+                # Обновление параметров улучшения освещения
+                clahe_clip = cv2.getTrackbarPos("CLAHE Clip", "Controls") / 10.0
+                gamma_dark = cv2.getTrackbarPos("Gamma Dark x10", "Controls") / 10.0
+                brightness_thresh = cv2.getTrackbarPos("Brightness Thresh", "Controls")
+                
+                # Пересоздаём CLAHE при изменении параметров
+                if (clahe_clip != system.enhancer.clahe_clip_limit or 
+                    brightness_thresh != system.enhancer.brightness_threshold):
+                    system.enhancer.update_clahe(clip_limit=clahe_clip, 
+                                                 grid_size=system.enhancer.clahe_grid_size)
+                    system.enhancer.brightness_threshold = brightness_thresh
+                system.enhancer.gamma_dark = gamma_dark
+                
+                # Мягкая перезагрузка базы
+                if cv2.getTrackbarPos("[RELOAD BASE]", "Controls") == 1:
+                    system.reload_base()
+                    cv2.setTrackbarPos("[RELOAD BASE]", "Controls", 0)
 
-        frame_count += 1
+                # Корректный FPS
+                curr_time = time.time()
+                fps = 1.0 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0
+                prev_time = curr_time
 
-    cap.release()
-    cv2.destroyAllWindows()
-    print("[INFO] Завершено.")
+                # Обработка с пропуском кадров
+                if frame_count % config.frame_skip == 0:
+                    last_data = system.recognize_faces(frame)
+                    
+                frame = system.draw_results(frame, last_data)
+                
+                cv2.putText(frame, f"FPS: {fps:.1f}", (frame.shape[1] - 110, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                cv2.putText(frame, timestamp, (frame.shape[1] - 160, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+                cv2.imshow('Video Feed', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+                frame_count += 1
+
+    except RuntimeError as e:
+        logger.error(f"Критическая ошибка: {e}")
+    finally:
+        logger.info("Завершено.")
+
 
 if __name__ == "__main__":
     main()
