@@ -4,6 +4,9 @@ numpy>=1.24.0
 insightface>=0.7.3
 onnxruntime>=1.15.0
 
+# YOLOv8 для детекции объектов (опционально)
+ultralytics>=8.0.0
+
 # Тестирование
 pytest>=7.4.0
 
