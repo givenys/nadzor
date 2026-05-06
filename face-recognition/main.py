@@ -34,7 +34,8 @@ def main():
     
     # Инициализация конфигурации и системы
     config = DynamicConfig()
-    system = FaceRecognitionSystem(config)
+    # enable_yolo=True включает детекцию объектов YOLOv8
+    system = FaceRecognitionSystem(config, enable_yolo=True, yolo_conf_threshold=0.4)
     
     try:
         with video_capture_context(0, WINDOW_WIDTH, WINDOW_HEIGHT) as cap:
@@ -82,13 +83,16 @@ def main():
                 
                 # Расчёт FPS
                 fps = fps_calc.update()
-                
+
                 # Обработка с пропуском кадров
+                yolo_objects = None
                 if frame_count % config.frame_skip == 0:
                     last_data = system.recognize_faces(frame)
-                
-                # Отрисовка результатов
-                frame = system.draw_results(frame, last_data)
+                    # Детекция объектов YOLO
+                    yolo_objects = system.detect_yolo_objects(frame)
+
+                # Отрисовка результатов (лица + объекты YOLO)
+                frame = system.draw_results(frame, last_data, yolo_objects)
                 
                 # Отображение FPS и времени
                 cv2.putText(frame, f"FPS: {fps:.1f}", 

@@ -16,6 +16,7 @@ from config.settings import (
 from config.dynamic import DynamicConfig
 from core.enhancer import LowLightEnhancer
 from core.models import load_reference_faces, warmup_model
+from core.yolo import YOLODetector
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,17 @@ class FaceRecognitionSystem:
     """
     Основная система распознавания лиц.
     Использует InsightFace для детекции и генерации эмбеддингов.
+    Также поддерживает YOLOv8 для детекции объектов COCO.
     """
     
-    def __init__(self, config: DynamicConfig):
+    def __init__(self, config: DynamicConfig, enable_yolo: bool = True, yolo_conf_threshold: float = 0.4):
         """
         Инициализация системы распознавания.
         
         Args:
             config: Динамическая конфигурация с параметрами
+            enable_yolo: Включить ли детекцию объектов YOLO
+            yolo_conf_threshold: Порог уверенности для YOLO детекции
         """
         self.config = config
         self.known_embeddings: List[Dict] = []
@@ -69,6 +73,16 @@ class FaceRecognitionSystem:
             gamma_dark=1.8,
             brightness_threshold=70
         )
+        
+        # Инициализация YOLO детектора
+        self.yolo_detector: Optional[YOLODetector] = None
+        if enable_yolo:
+            try:
+                self.yolo_detector = YOLODetector(conf_threshold=yolo_conf_threshold)
+                logger.info("YOLOv8 детектор успешно инициализирован")
+            except Exception as e:
+                logger.warning(f"Не удалось инициализировать YOLO: {e}. Детекция объектов будет отключена.")
+                self.yolo_detector = None
         
         logger.info("Система готова к работе")
     
@@ -157,17 +171,20 @@ class FaceRecognitionSystem:
         
         return recognized_data
     
-    def draw_results(self, frame: np.ndarray, data: List[FaceData]) -> np.ndarray:
+    def draw_results(self, frame: np.ndarray, data: List[FaceData], 
+                     yolo_objects: Optional[List[Dict[str, Any]]] = None) -> np.ndarray:
         """
-        Отрисовка результатов распознавания.
+        Отрисовка результатов распознавания лиц и объектов YOLO.
         
         Args:
             frame: Кадр для отрисовки
             data: Список распознанных лиц
+            yolo_objects: Список обнаруженных объектов YOLO (опционально)
             
         Returns:
             Кадр с нанесёнными результатами
         """
+        # Отрисовка лиц
         for item in data:
             x1, y1, x2, y2 = item.bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), item.color, 2)
@@ -183,7 +200,32 @@ class FaceRecognitionSystem:
             cv2.putText(frame, label, (x1, y1 - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, item.color, 2)
         
-        info_text = f"Faces: {len(data)} | Model: {self.config.model_name}"
+        # Отрисовка объектов YOLO
+        if yolo_objects and self.yolo_detector:
+            frame = self.yolo_detector.draw_detections(frame, yolo_objects)
+        
+        # Формирование информационного текста
+        info_parts = [f"Faces: {len(data)}"]
+        if yolo_objects:
+            info_parts.append(f"Objects: {len(yolo_objects)}")
+        info_parts.append(f"Model: {self.config.model_name}")
+        
+        info_text = " | ".join(info_parts)
         cv2.putText(frame, info_text, (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         return frame
+    
+    def detect_yolo_objects(self, frame: np.ndarray) -> Optional[List[Dict[str, Any]]]:
+        """
+        Детекция объектов с помощью YOLO.
+        
+        Args:
+            frame: Кадр в формате BGR
+            
+        Returns:
+            Список обнаруженных объектов или None, если YOLO отключен
+        """
+        if self.yolo_detector is None:
+            return None
+        
+        return self.yolo_detector.detect_objects(frame)
