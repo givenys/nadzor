@@ -30,7 +30,7 @@ class video_capture_context:
         """Открытие камеры при входе в контекст"""
         #self.cap = cv2.VideoCapture(self.cam_id)
         #self.cap = cv2.VideoCapture("http://10.26.166.98:4747/video")
-        self.cap = cv2.VideoCapture("http://192.168.1.100:4747/video")
+        self.cap = cv2.VideoCapture("http://192.168.1.101:4747/video")
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         

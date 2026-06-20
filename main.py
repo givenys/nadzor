@@ -30,7 +30,7 @@ def main():
     logger.info(f"📷 Device ID: {DEVICE_ID}")
     
     config = DynamicConfig()
-    system = FaceRecognitionSystem(config, enable_yolo=True, yolo_conf_threshold=0.4)
+    system = FaceRecognitionSystem(config, enable_yolo=True, yolo_conf_threshold=0.4, fire_conf_threshold=0.5)
     
     frame_count = 0
     send_counter = 0
@@ -61,7 +61,7 @@ def main():
                 # Отрисовка рамок
                 frame = system.draw_results(frame, last_data, yolo_objects)
                 
-                # 🔥 Отправка на Node.js
+                # Отправка на Node.js
                 send_counter += 1
                 if send_counter % SEND_EVERY_N_FRAME == 0:
                     try:

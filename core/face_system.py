@@ -39,7 +39,7 @@ class FaceRecognitionSystem:
     Также поддерживает YOLOv8 для детекции объектов COCO.
     """
     
-    def __init__(self, config: DynamicConfig, enable_yolo: bool = True, yolo_conf_threshold: float = 0.4):
+    def __init__(self, config: DynamicConfig, enable_yolo: bool = True, yolo_conf_threshold: float = 0.4, fire_conf_threshold: float = 0.5):
         """
         Инициализация системы распознавания.
         
@@ -79,6 +79,12 @@ class FaceRecognitionSystem:
         if enable_yolo:
             try:
                 self.yolo_detector = YOLODetector(conf_threshold=yolo_conf_threshold)
+
+                self.fire_detector = YOLODetector(
+                    model_path="yolov8s.pt", 
+                    conf_threshold=fire_conf_threshold
+                )
+                
                 logger.info("YOLOv8 детектор успешно инициализирован")
             except Exception as e:
                 logger.warning(f"Не удалось инициализировать YOLO: {e}. Детекция объектов будет отключена.")
@@ -228,4 +234,14 @@ class FaceRecognitionSystem:
         if self.yolo_detector is None:
             return None
         
-        return self.yolo_detector.detect_objects(frame)
+        # Детектируем обычные объекты
+        objects = self.yolo_detector.detect_objects(frame)
+        
+        # Детектируем огонь и дым
+        fire_objects = self.fire_detector.detect_objects(frame)
+        
+        # Объединяем результаты
+        if fire_objects:
+            objects.extend(fire_objects)
+        
+        return objects #self.yolo_detector.detect_objects(frame)
