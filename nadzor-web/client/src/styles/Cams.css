@@ -1,0 +1,298 @@
+/* Основные стили дашборда */
+.dashboard {
+  min-height: 100vh;
+  background-color: #111827;
+  color: white;
+  padding: 1.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+}
+
+/* Шапка */
+.dashboard-header {
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #60a5fa;
+  margin: 0 0 0.25rem 0;
+}
+
+.subtitle {
+  color: #9ca3af;
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+/* Легенда статусов */
+.status-legend {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status-indicator {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+}
+
+.status-normal {
+  background-color: #22c55e;
+}
+
+.status-alert {
+  background-color: #ef4444;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Сетка камер */
+.camera-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, 1fr);
+  transition: all 0.5s ease;
+}
+
+.camera-grid-expanded {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+}
+
+/* Главное видео */
+.main-video-container {
+  grid-column: span 3;
+  grid-row: span 2;
+  position: relative;
+  background-color: black;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 2px solid #3b82f6;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+/* Карточка камеры */
+.camera-card {
+  position: relative;
+  background-color: black;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: 1px solid #374151;
+}
+
+.camera-card:hover {
+  transform: scale(1.02);
+}
+
+.camera-card-alert {
+  border: 2px solid #ef4444;
+  box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.5);
+}
+
+.camera-card-small {
+  grid-column: span 1;
+  grid-row: span 1;
+}
+
+/* Видео потоки */
+.video-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.video-preview {
+  opacity: 0.8;
+}
+
+.video-preview:hover {
+  opacity: 1;
+}
+
+/* Оверлей видео */
+.video-overlay {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  font-family: 'Courier New', monospace;
+}
+
+/* Badge тревоги */
+.alert-badge {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background-color: rgba(220, 38, 38, 0.9);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 700;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.acknowledge-btn {
+  margin-left: 1rem;
+  background-color: white;
+  color: #dc2626;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.25rem;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.acknowledge-btn:hover {
+  background-color: #e5e7eb;
+}
+
+/* Контролы видео */
+.video-controls {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.control-btn {
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background-color 0.2s;
+}
+
+.btn-collapse {
+  background-color: rgba(31, 41, 55, 0.8);
+}
+
+.btn-collapse:hover {
+  background-color: rgba(55, 65, 81, 0.8);
+}
+
+.btn-fullscreen {
+  background-color: rgba(37, 99, 235, 0.8);
+}
+
+.btn-fullscreen:hover {
+  background-color: rgba(59, 130, 246, 0.8);
+}
+
+/* Инфо камеры */
+.camera-info {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.status-dot-normal {
+  background-color: #22c55e;
+}
+
+.status-dot-alert {
+  background-color: #ef4444;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.camera-name {
+  font-size: 0.75rem;
+  font-family: 'Courier New', monospace;
+  background-color: rgba(0, 0, 0, 0.6);
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+/* Оверлей расширения */
+.expand-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s;
+  background-color: rgba(0, 0, 0, 0.4);
+}
+
+.camera-card:hover .expand-overlay {
+  opacity: 1;
+}
+
+.expand-icon {
+  font-size: 2.5rem;
+}
+
+/* Анимации */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+
+
+.camera-card-offline {
+  background: #0a0a0a;
+  cursor: default;
+}
+
+.offline-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+  color: #555;
+  gap: 8px;
+}
+
+.offline-icon {
+  font-size: 2.5rem;
+  opacity: 0.5;
+}
+
+.offline-text {
+  font-size: 0.9rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.status-offline {
+  background: #555;
+}

@@ -1,0 +1,24 @@
+{
+  "name": "wellso",
+  "version": "0.0.1",
+  "description": "cool site",
+  "license": "ISC",
+  "author": "givenys",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "test": "test_command",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.14.3",
+    "path-to-regexp": "^8.2.0",
+    "pg": "^8.21.0"
+  }
+}

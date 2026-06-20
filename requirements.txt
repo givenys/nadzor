@@ -1,0 +1,14 @@
+# Основные зависимости
+opencv-python>=4.8.0
+numpy>=1.24.0
+insightface>=0.7.3
+onnxruntime>=1.15.0
+
+# YOLOv8 для детекции объектов
+ultralytics>=8.0.0
+
+# Тестирование
+pytest>=7.4.0
+
+# Для работы с .env
+python-dotenv>=1.0.0
