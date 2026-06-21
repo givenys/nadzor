@@ -81,7 +81,7 @@ class FaceRecognitionSystem:
                 self.yolo_detector = YOLODetector(conf_threshold=yolo_conf_threshold)
 
                 self.fire_detector = YOLODetector(
-                    model_path="yolov8s.pt", 
+                    model_path="yolov8_fire.pt", 
                     conf_threshold=fire_conf_threshold
                 )
                 
