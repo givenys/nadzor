@@ -85,8 +85,8 @@ class YOLODetector:
                 
             for box in r.boxes:
                 conf = float(box.conf)
-                if conf < self.conf_threshold:
-                    continue
+                #if conf < self.conf_threshold:
+                    #continue
                 
                 cls_id = int(box.cls)
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -106,7 +106,7 @@ class YOLODetector:
     
     def draw_detections(self, frame: cv2.Mat, objects: List[Dict[str, Any]]) -> cv2.Mat:
         """
-        Отрисовка检测结果 на кадре.
+        Отрисовка на кадре.
         
         Args:
             frame: Кадр для отрисовки

@@ -24,8 +24,8 @@ CONTROLS_WINDOW_HEIGHT = 220
 CONTROLS_WINDOW_OFFSET_X = 20
 
 # --- МОДЕЛИ ---
-DEFAULT_MODEL_NAME = "ArcFace (InsightFace)"
-INSIGHTFACE_DET_SIZE = (320, 320)  # Баланс скорость/точность
+DEFAULT_MODEL_NAME = ""#"ArcFace (InsightFace)"
+INSIGHTFACE_DET_SIZE = (320, 320)
 
 # --- ЛОГИРОВАНИЕ ---
 LOG_LEVEL = "INFO"

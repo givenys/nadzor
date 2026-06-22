@@ -39,7 +39,7 @@ class FaceRecognitionSystem:
     Также поддерживает YOLOv8 для детекции объектов COCO.
     """
     
-    def __init__(self, config: DynamicConfig, enable_yolo: bool = True, yolo_conf_threshold: float = 0.4, fire_conf_threshold: float = 0.5):
+    def __init__(self, config: DynamicConfig, enable_yolo: bool = True, enable_fire: bool = True, yolo_conf_threshold: float = 0.4, fire_conf_threshold: float = 0.5):
         """
         Инициализация системы распознавания.
         
@@ -79,7 +79,15 @@ class FaceRecognitionSystem:
         if enable_yolo:
             try:
                 self.yolo_detector = YOLODetector(conf_threshold=yolo_conf_threshold)
+                
+                logger.info("YOLOv8 детектор успешно инициализирован")
+            except Exception as e:
+                logger.warning(f"Не удалось инициализировать YOLO: {e}. Детекция объектов будет отключена.")
+                self.yolo_detector = None
 
+        self.fire_detector: Optional[YOLODetector] = None
+        if enable_fire:
+            try:
                 self.fire_detector = YOLODetector(
                     model_path="yolov8_fire.pt", 
                     conf_threshold=fire_conf_threshold
@@ -88,7 +96,7 @@ class FaceRecognitionSystem:
                 logger.info("YOLOv8 детектор успешно инициализирован")
             except Exception as e:
                 logger.warning(f"Не удалось инициализировать YOLO: {e}. Детекция объектов будет отключена.")
-                self.yolo_detector = None
+                self.fire_detector = None
         
         logger.info("Система готова к работе")
     
@@ -116,10 +124,8 @@ class FaceRecognitionSystem:
         if not self.known_embeddings or self.known_embeddings_matrix is None:
             return []
 
-        # 🔦 Улучшаем кадр для детекции, если нужно
         processed_frame = self.enhancer.enhance(frame)
         
-        # InsightFace работает с улучшенным кадром
         faces = self.app.get(processed_frame)
         
         if not faces:
@@ -130,38 +136,30 @@ class FaceRecognitionSystem:
         min_area = np.clip(self.config.min_face_area, 1000, 10000)
         
         for face in faces:
-            # Получаем bounding box (x1, y1, x2, y2)
+
             bbox = face.bbox.astype(int)
             x1, y1, x2, y2 = bbox
             w, h = x2 - x1, y2 - y1
             
-            # Фильтрация по площади
             if w * h < min_area:
                 continue
             
             current_vec = face.embedding.reshape(1, -1)  # (1, dim)
             
-            # ВЕКТОРИЗОВАННОЕ СРАВНЕНИЕ: вместо цикла по всем известным лицам
-            # используем матричное умножение для вычисления всех сходств сразу
             dot_products = np.dot(current_vec, self.known_embeddings_matrix.T)  # (1, N)
-            
-            # Нормы уже предвычислены, берем норму текущего вектора
+
             norm_current = np.linalg.norm(current_vec)
             if norm_current == 0:
                 continue
-                
-            # Косинусное сходство для всех лиц сразу
+
             cosine_similarities = dot_products / (norm_current * self.known_norms.flatten())  # (N,)
             
-            # Находим лучшее совпадение
             best_idx = np.argmax(cosine_similarities)
             max_sim = cosine_similarities[best_idx]
             best_name = self.known_embeddings[best_idx]['name']
             
-            # Конвертируем сходство в "расстояние" для порога
             distance = 1.0 - max_sim
             
-            # Уверенность
             confidence = max(0.0, max_sim) 
             
             if distance <= threshold:
@@ -190,7 +188,6 @@ class FaceRecognitionSystem:
         Returns:
             Кадр с нанесёнными результатами
         """
-        # Отрисовка лиц
         for item in data:
             x1, y1, x2, y2 = item.bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), item.color, 2)
@@ -207,10 +204,11 @@ class FaceRecognitionSystem:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, item.color, 2)
         
         # Отрисовка объектов YOLO
-        if yolo_objects and self.yolo_detector:
-            frame = self.yolo_detector.draw_detections(frame, yolo_objects)
+        if yolo_objects:
+            detector = self.yolo_detector or self.fire_detector
+            if detector:
+                frame = detector.draw_detections(frame, yolo_objects)
         
-        # Формирование информационного текста
         info_parts = [f"Faces: {len(data)}"]
         if yolo_objects:
             info_parts.append(f"Objects: {len(yolo_objects)}")
@@ -230,18 +228,13 @@ class FaceRecognitionSystem:
             
         Returns:
             Список обнаруженных объектов или None, если YOLO отключен
-        """
-        if self.yolo_detector is None:
-            return None
+        """        
+        objects = []
+    
+        if self.yolo_detector is not None:
+            objects.extend(self.yolo_detector.detect_objects(frame))
         
-        # Детектируем обычные объекты
-        objects = self.yolo_detector.detect_objects(frame)
+        if self.fire_detector is not None:
+            objects.extend(self.fire_detector.detect_objects(frame))
         
-        # Детектируем огонь и дым
-        #fire_objects = self.fire_detector.detect_objects(frame)
-        
-        # Объединяем результаты
-        # if fire_objects:
-        #     objects.extend(fire_objects)
-        
-        return objects #self.yolo_detector.detect_objects(frame)
+        return objects if objects else None

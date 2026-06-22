@@ -35,7 +35,7 @@ def main():
     # Инициализация конфигурации и системы
     config = DynamicConfig()
     # enable_yolo=True включает детекцию объектов YOLOv8
-    system = FaceRecognitionSystem(config, enable_yolo=True, 
+    system = FaceRecognitionSystem(config, enable_yolo=False, enable_fire=True,
                                     yolo_conf_threshold=config.threshold, 
                                     fire_conf_threshold=config.threshold)
     

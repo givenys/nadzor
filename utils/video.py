@@ -90,7 +90,7 @@ class video_capture_context:
     
     def __enter__(self):
         self.camera = ThreadedCamera(
-            "http://192.168.1.105:4747/video",  # Твой IP
+            "http://192.168.1.101:4747/video",
             self.width, 
             self.height
         )
