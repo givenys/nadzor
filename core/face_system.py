@@ -209,12 +209,12 @@ class FaceRecognitionSystem:
             if detector:
                 frame = detector.draw_detections(frame, yolo_objects)
         
-        info_parts = [f"Faces: {len(data)}"]
-        if yolo_objects:
-            info_parts.append(f"Objects: {len(yolo_objects)}")
-        info_parts.append(f"Model: {self.config.model_name}")
+        #info_parts = [f"Faces: {len(data)}"]
+        #if yolo_objects:
+            #info_parts.append(f"Objects: {len(yolo_objects)}")
+        #info_parts.append(f"Model: {self.config.model_name}")
         
-        info_text = " | ".join(info_parts)
+        info_text = "" #" | ".join(info_parts)
         cv2.putText(frame, info_text, (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         return frame

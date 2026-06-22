@@ -7,8 +7,8 @@ class DynamicConfig:
     """Контейнер для параметров, которые можно менять на лету"""
     
     def __init__(self):
-        # Порог для косинусного расстояния (обычно 0.3 - 0.6 для ArcFace)
-        self.threshold: float = 0.50
+        # Порог для косинусного расстояния
+        self.threshold: float = 0.80
         
         # Пропуск кадров для оптимизации производительности
         self.frame_skip: int = 1
@@ -16,5 +16,5 @@ class DynamicConfig:
         # Минимальная площадь лица в пикселях для детекции
         self.min_face_area: int = 2500
         
-        # Название модели (для отображения)
-        self.model_name: str = "ArcFace (InsightFace)"
+        # Название модели
+        self.model_name: str = "InsightFace"

@@ -1,6 +1,5 @@
 """
 Face Recognition System - Main Entry Point
-Точка входа с минимальной логикой.
 """
 import sys
 import os

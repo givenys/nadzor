@@ -1,10 +1,13 @@
 import sys
 import os
 import cv2
-import requests
 import logging
-import threading
 import time
+import queue
+import threading
+import io
+import websocket
+from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -13,148 +16,132 @@ from core.face_system import FaceRecognitionSystem
 from utils.video import video_capture_context, FPSCalculator
 from utils.logging_config import setup_logging
 
-# НАСТРОЙКИ
-NODE_JS_URL = "http://localhost:3001/api/cams/upload"
+NODE_JS_WS_URL = "ws://localhost:3001/api/cams/upload" 
 DEVICE_ID = "81826630-e466-441d-9f92-351d6c3fe423"
 API_KEY = "my-secret-camera-key-2026"
-SHOW_LOCAL_WINDOW = False
+SEND_EVERY_N_FRAME = 3
+JPEG_QUALITY = 75 
 
-stop_event = threading.Event()
+logger = logging.getLogger(__name__)
 
-latest_frame = None
-latest_frame_lock = threading.Lock()
+class WebSocketFrameSender:
+    def __init__(self, ws_url, device_id, api_key, jpeg_quality=75, max_queue_size=2):
+        self.device_id = device_id
+        self.api_key = api_key
+        self.jpeg_quality = jpeg_quality
+        
+        self.queue = queue.Queue(maxsize=max_queue_size)
+        
+        self.ws_url = f"{ws_url}?device_id={device_id}&api_key={api_key}"
+        self.ws = None
+        
+        # Запускаем фоновый поток для отправки
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
 
-def camera_worker():
-    """Поток 1"""
-    global latest_frame
-    logger = logging.getLogger(__name__)
-    logger.info("Camera worker started")
-    
-    with video_capture_context(0, 640, 480) as cap:
-        logger.info("Камера открыта")
-        fps_calc = FPSCalculator()
-        frame_count = 0
-        
-        while not stop_event.is_set():
-            ret, frame = cap.read()
-            if not ret:
-                logger.error("Не удалось получить кадр")
-                time.sleep(0.1)
-                continue
-            
-            fps = fps_calc.update()
-            frame_count += 1
-            
-            # Сохраняем САМЫЙ СВЕЖИЙ кадр (перезаписываем предыдущий)
-            with latest_frame_lock:
-                latest_frame = frame.copy()
-            
-            # Логируем статистику
-            if frame_count % 150 == 0:
-                logger.info(f"FPS: {fps:.1f}")
-    
-    logger.info("Camera worker stopped")
-
-def ai_and_sender_worker():
-    """Поток 2: AI обработка + отправка на сервер"""
-    global latest_frame
-    logger = logging.getLogger(__name__)
-    logger.info("AI + Sender worker started")
-    
-    config = DynamicConfig()
-    config.frame_skip = 1
-    system = FaceRecognitionSystem(config, enable_yolo=True, enable_fire=True,
-                                   yolo_conf_threshold=0.4, 
-                                   fire_conf_threshold=0.5)
-    
-    processed_count = 0
-    
-    while not stop_event.is_set():
-        # Берём САМЫЙ СВЕЖИЙ кадр
-        with latest_frame_lock:
-            if latest_frame is None:
-                time.sleep(0.01)
-                continue
-            frame = latest_frame.copy()
-        
-        # AI обработка
-        start_time = time.time()
-        last_data = system.recognize_faces(frame)
-        yolo_objects = system.detect_yolo_objects(frame)
-        
-        # Отрисовка результатов
-        frame_with_ai = system.draw_results(frame, last_data, yolo_objects)
-        processing_time = time.time() - start_time
-        
-        processed_count += 1
-        
-        # Кодируем в JPEG
-        _, buffer = cv2.imencode('.jpg', frame_with_ai, 
-                                [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-        
-        # Отправляем на сервер
+    def _connect(self):
         try:
-            response = requests.post(
-                NODE_JS_URL,
-                data=buffer.tobytes(),
-                headers={
-                    'Content-Type': 'image/jpeg',
-                    'X-Device-ID': DEVICE_ID,
-                    'X-API-Key': API_KEY,
-                    'X-Source': 'AI'
-                },
-                timeout=1
+            self.ws = websocket.create_connection(
+                self.ws_url,
+                header=[
+                    f"X-Device-ID: {self.device_id}",
+                    f"X-API-Key: {self.api_key}"
+                ],
+                timeout=5
             )
+            logger.info("WebSocket connected to Node.js")
+        except Exception as e:
+            logger.warning(f"WebSocket connection failed: {e}")
+            self.ws = None
+
+    def _worker(self):
+        while True:
+            frame = self.queue.get()
+            if frame is None:
+                break
             
-            if response.status_code == 200:
-                if processed_count % 10 == 0:
-                    logger.debug(f"AI processed {processed_count} frames, time: {processing_time:.3f}s")
-            else:
-                logger.warning(f"Server status: {response.status_code}")
+            if self.ws is None:
+                self._connect()
+                if self.ws is None:
+                    self.queue.task_done()
+                    time.sleep(1)
+                    continue
+
+            try:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_frame)
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=self.jpeg_quality)
+                jpeg_bytes = buffer.getvalue()
                 
-        except requests.exceptions.RequestException as e:
-            logger.debug(f"Network error")
-    
-    logger.info(f"AI + Sender worker stopped. Processed: {processed_count}")
+                self.ws.send_binary(jpeg_bytes)
+                
+            except websocket.WebSocketException as e:
+                logger.warning(f"WebSocket send error: {e}. Reconnecting...")
+                try: self.ws.close()
+                except: pass
+                self.ws = None
+            except Exception as e:
+                logger.error(f"Unexpected error in sender: {e}", exc_info=True)
+                self.ws = None
+            finally:
+                self.queue.task_done()
 
+    def send(self, frame):
+        try:
+            self.queue.put_nowait(frame)
+            return True
+        except queue.Full:
+            return False
+        
 def main():
-    logger = setup_logging(level="INFO")
-    logger.info("Запуск стриминга (2 потока)...")
-    logger.info(f"URL: {NODE_JS_URL}")
+    setup_logging()
+    config = DynamicConfig()
+    system = FaceRecognitionSystem(config)
 
-    # Создаем потоки
-    threads = []
-    
-    # Поток 1: Камера (читает кадры и сохраняет самый свежий)
-    camera_thread = threading.Thread(target=camera_worker, name="CameraWorker", daemon=True)
-    threads.append(camera_thread)
-    
-    # Поток 2: AI обработка + отправка на сервер
-    ai_thread = threading.Thread(target=ai_and_sender_worker, name="AIWorker", daemon=True)
-    threads.append(ai_thread)
+    sender = WebSocketFrameSender(NODE_JS_WS_URL, DEVICE_ID, API_KEY, JPEG_QUALITY, max_queue_size=2)
 
-    # Запускаем все потоки
-    for thread in threads:
-        thread.start()
-        logger.info(f"Started: {thread.name}")
-
-    logger.info("Стриминг запущен. Ctrl+C для остановки.")
+    frames_sent = 0
+    frame_count = 0
+    send_counter = 0
 
     try:
-        # Основной поток ждет
-        while not stop_event.is_set():
-            time.sleep(1)
-            
+        with video_capture_context(0, 640, 480) as cam:
+            logger.info("Камера открыта (ThreadedCamera)")
+            fps_calc = FPSCalculator()
+            last_data = []
+            last_yolo_objects = []
+
+            logger.info("Стриминг запущен. Ctrl+C для остановки.")
+
+            while True:
+                ret, frame = cam.read()
+                if not ret:
+                    time.sleep(0.01)
+                    continue
+
+                fps = fps_calc.update()
+
+                if frame_count % config.frame_skip == 0:
+                    last_data = system.recognize_faces(frame)
+                    last_yolo_objects = system.detect_yolo_objects(frame) or []
+
+                frame = system.draw_results(frame, last_data, last_yolo_objects)
+
+                send_counter += 1
+                if send_counter % SEND_EVERY_N_FRAME == 0:
+                    if sender.send(frame):
+                        frames_sent += 1
+
+                frame_count += 1
+
+                if frame_count % 150 == 0:
+                    logger.info(f"Frames: {frame_count} | FPS: {fps:.1f} | Sent: {frames_sent}")
+
     except KeyboardInterrupt:
         logger.info("Остановлено пользователем")
-    
     finally:
-        # Останавливаем все потоки
-        stop_event.set()
-        for thread in threads:
-            thread.join(timeout=3)
-        
-        logger.info("Все потоки остановлены")
+        logger.info(f"Итоги: Отправлено ~{frames_sent}")
 
 if __name__ == "__main__":
     main()
