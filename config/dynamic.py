@@ -11,7 +11,7 @@ class DynamicConfig:
         self.threshold: float = 0.50
         
         # Пропуск кадров для оптимизации производительности
-        self.frame_skip: int = 1
+        self.frame_skip: int = 3
         
         # Минимальная площадь лица в пикселях для детекции
         self.min_face_area: int = 2500

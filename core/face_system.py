@@ -238,10 +238,10 @@ class FaceRecognitionSystem:
         objects = self.yolo_detector.detect_objects(frame)
         
         # Детектируем огонь и дым
-        fire_objects = self.fire_detector.detect_objects(frame)
+        #fire_objects = self.fire_detector.detect_objects(frame)
         
         # Объединяем результаты
-        if fire_objects:
-            objects.extend(fire_objects)
+        # if fire_objects:
+        #     objects.extend(fire_objects)
         
         return objects #self.yolo_detector.detect_objects(frame)

@@ -35,7 +35,9 @@ def main():
     # Инициализация конфигурации и системы
     config = DynamicConfig()
     # enable_yolo=True включает детекцию объектов YOLOv8
-    system = FaceRecognitionSystem(config, enable_yolo=True, yolo_conf_threshold=0.4)
+    system = FaceRecognitionSystem(config, enable_yolo=True, 
+                                    yolo_conf_threshold=config.threshold, 
+                                    fire_conf_threshold=config.threshold)
     
     try:
         with video_capture_context(0, WINDOW_WIDTH, WINDOW_HEIGHT) as cap:

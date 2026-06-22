@@ -4,12 +4,8 @@ import numpy as np
 
 # Список всех твоих моделей
 models_to_test = [
-    'yolov8n.pt',      # стандартная YOLOv8s (COCO dataset - 80 классов, НЕТ огня!)
-    'yolov8_fire.pt',      # неизвестно, надо проверить
-    # Добавь сюда пути к скачанным моделям fire detection
-    # 'fire_model_1.pt',
-    # 'fire_model_2.pt',
-    # 'fire_model_3.pt',
+    'yolov8n.pt',
+    'yolov8_fire.pt',
 ]
 
 def test_model(model_path):
@@ -37,11 +33,10 @@ def test_model(model_path):
             for class_id, class_name in fire_classes:
                 print(f"   - {class_id}: {class_name}")
         else:
-            print(f"\n❌ В этой модели НЕТ классов огня!")
-            print(f"   Это обычная модель COCO (80 объектов: люди, машины, кошки и т.д.)")
+            print(f"\nВ этой модели нет классов огня!")
         
         # Тест на изображении (если есть)
-        test_image = 'test_fire.jpg'  # создай или скачай картинку с огнём
+        test_image = 'test_fire.jpg'
         
         try:
             # Создаём тестовое изображение (чёрный фон с оранжевым "огнём")
