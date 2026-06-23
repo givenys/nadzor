@@ -49,7 +49,7 @@ const CameraCard = ({ camera, isMain = false, expandedId, toggleFocus, incidents
     >
       {isOffline ? (
         <div className="offline-placeholder">
-          <div className="offline-icon">📡</div>
+          {/*<div className="offline-icon">📡</div>*/}
           <div className="offline-text">
             {!camera.is_online ? 'Камера отключена' : 
              status === 'connecting' ? 'Подключение...' : 
