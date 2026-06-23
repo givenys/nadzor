@@ -15,10 +15,10 @@ CREATE TABLE employees (
 );
 
 CREATE TABLE operators (
-    id UUID PRIMARY KEY REFERENCES employees(id),  -- FK и PK одновременно
+    id UUID PRIMARY KEY REFERENCES employees(id), 
     login TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,  -- ️ Храните здесь хэш пароля, а не сам пароль!
-    role TEXT NOT NULL,      -- Роль в системе (admin, viewer, dispatcher и т.д.)
+    password TEXT NOT NULL,
+    role TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
